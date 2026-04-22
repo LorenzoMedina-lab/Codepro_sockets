@@ -29,11 +29,11 @@ while True:
     # Devuelve tres listas: legibles, escribibles (ignorada aquí con '_'), y con errores.
     read_sockets, _, exception_sockets = select.select(lista_sockets, [], lista_sockets) #Socket de escucha.
 
-    # Iteramos solo sobre los descriptores que el SO nos avisó que tienen actividad.
+    # Se itera solo sobre los descriptores que el Sistema avisó que tienen actividad.
     for notified_socket in read_sockets:
         
         # Si el socket con actividad es el socket del servidor, significa que hay un nuevo cliente intentando el 3-way handshake de TCP.
-        if notified_socket == servidor:
+        if notified_socket == servidor: # Si el socket activo es el servidor, no es un mensaje es una nueva conexión entrando.
             # accept() crea un NUEVO socket dedicado exclusivamente a hablar con este cliente específico.
             client_socket, client_address = servidor.accept()
             lista_sockets.append(client_socket) # Agregamos el nuevo FD a la lista de monitoreo.
@@ -48,7 +48,7 @@ while True:
                 # En la API de sockets, si recv() devuelve 0 bytes (un string vacío), 
                 # significa que el cliente cerró la conexión (envió un paquete TCP FIN).
                 if not message:
-                    print(f"⚠️ Cliente desconectado limpiamente.")
+                    print(f" Cliente desconectado limpiamente.")
                     lista_sockets.remove(notified_socket) # Lo sacamos del select loop.
                     notified_socket.close() # Liberamos el FD en el sistema operativo.
                     continue

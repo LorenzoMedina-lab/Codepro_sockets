@@ -5,6 +5,7 @@ import time      # Necesario para las pausas en los intentos de reconexión.
 
 IP = "127.0.0.1" # Interfaz de loopback (localhost). El cliente busca al servidor en su propia máquina.
 PUERTO = 5000 #Puerto de envio 
+apagando = False # Bandera global indica si el programa se está cerrando a propósito para evitar reconexiones innecesarias.
 
 # Creamos el descriptor de archivo del cliente (IPv4, TCP).
 cliente = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -22,6 +23,9 @@ except Exception as e:
 def reconectar():
     global cliente # Modificamos el descriptor de archivo global
     while True:
+        if apagando: # Si se esta cerrando con el comando /exit se cancela la reconexión.
+            return
+            
         print("\n🔄 Intentando reconectar en 3 segundos...")
         time.sleep(3)
         try:
@@ -38,7 +42,7 @@ def reconectar():
 
 # Definimos la rutina que ejecutará el hilo secundario: su único trabajo es leer el socket.
 def recibir_mensajes():
-    global cliente
+    global cliente, apagando # Modifica el descriptor y lee la bandera de estado global
     while True: # Bucle infinito de escucha.
         try:
             # Bloquea hasta que lleguen bytes desde la red. decode() transforma los bytes crudos a un string Unicode (UTF-8).
@@ -52,19 +56,23 @@ def recibir_mensajes():
                 sys.stdout.flush() # Fuerza al SO a imprimir el buffer de stdout inmediatamente.
             else:
                 # recv() de 0 bytes = servidor apagado o conexión cerrada.
-                print("\n🛑 El servidor ha cerrado la conexión.")
+                if apagando: 
+                    break # Si se esta cerrando con el comando /exit.
+                print("\n🛑 El servidor ha cerrado la conexión limpiamente.")
                 cliente.close()
                 reconectar() # Disparamos la reconexión en lugar de matar el hilo
                 
-        except Exception:
+        except Exception: # Captura cualquier excepción de red, como si el servidor se cayó abruptamente (ConnectionResetError).
+            if apagando: 
+                break # Si el usuario escribió /exit, morimos en silencio.
             print("\n🛑 Error de red. Desconectado.")
             cliente.close()
             reconectar() # Disparamos la reconexión en lugar de matar el hilo
 
-# Instanciamos el hilo pasándole la función objetivo.
+# Instanciamos el hilo pasándole la función objetivo. Un hilo es una linea de ejecucion independiente dentro del mismo proceso.
 receive_thread = threading.Thread(target=recibir_mensajes)
-# Modo demonio: si el hilo principal (el que lee el teclado) termina, este hilo muere automáticamente con él. No queda colgado.
-receive_thread.daemon = True 
+# Si el hilo principal (el que lee el teclado) termina, este hilo muere automáticamente con él. No queda colgado.
+receive_thread.daemon = True # Esto es importante para que el programa pueda cerrarse limpiamente. 
 receive_thread.start() # Le pide al SO que comience a ejecutar el hilo.
 
 # Hilo principal: se encarga exclusivamente de I/O de usuario (teclado a red).
@@ -79,7 +87,13 @@ while True:
         
         # Comando para terminar el proceso de forma limpia.
         if mensaje.lower() == '/exit':
-            cliente.close() # Envía el TCP FIN al servidor.
+            apagando = True # Se levanta la bandera para que los hilos sepan que se está cerrando a propósito y no intenten reconectar.
+            try:
+                # shutdown() apaga el flujo de red (Envía TCP FIN al servidor) antes de destruir el socket
+                cliente.shutdown(socket.SHUT_RDWR) # SHUT_RDWR indica que no se enviarán ni recibirán más datos.
+            except Exception:
+                pass 
+            cliente.close() # Destruimos el file descriptor localmente.
             sys.exit()     # Mata el proceso local.
             
         if mensaje:
@@ -92,6 +106,11 @@ while True:
                 print("\n⚠️ El socket no está listo. Esperando reconexión...")
             
     except KeyboardInterrupt:
-        # Maneja la señal SIGINT (cuando presionás Ctrl+C en la terminal) para no dejar sockets zombies.
+        # Maneja la señal SIGINT (cuando presionás Ctrl+C en la terminal) para no dejar sockets colgados.
+        apagando = True # 🚩 LEVANTAMOS LA BANDERA
+        try:
+            cliente.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
         cliente.close()
         sys.exit()
